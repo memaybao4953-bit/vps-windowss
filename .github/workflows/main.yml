@@ -1,0 +1,82 @@
+name: 🚀 SEVER AI STV PREMIUM - PERSISTENT
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: '🕐 Thời gian sử dụng'
+        required: false
+        default: '5h40m'
+        type: choice
+        options:
+        - '1h'
+        - '3h' 
+        - '5h40m'
+
+jobs:
+  Premium-RDP-Setup:
+    runs-on: windows-2019
+    timeout-minutes: 360
+    
+    steps:
+      - name: 🎯 KHỞI ĐỘNG HỆ THỐNG
+        run: |
+          Write-Host "🤖 AI STV PREMIUM RDP SERVER - WINDOWS 2019" -ForegroundColor Yellow
+          
+      - name: 🚀 TỐI ƯU HÓA GIAO DIỆN (GIẢM LAG)
+        run: |
+          # Tắt hiệu ứng mờ (Transparency) và hoạt ảnh để RDP mượt hơn
+          Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name "MenuShowDelay" -Value 0
+          Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name "VisualFXSetting" -Value 2
+          
+      - name: 🔧 CẤU HÌNH HỆ THỐNG
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          netsh advfirewall firewall add rule name="RDP-Premium" dir=in action=allow protocol=TCP localport=3389 profile=any
+          Start-Service TermService -ErrorAction SilentlyContinue
+
+      - name: 👤 TẠO TÀI KHOẢN
+        run: |
+          $pass = "STVPremium123!"
+          $securePass = ConvertTo-SecureString $pass -AsPlainText -Force
+          if (-not (Get-LocalUser -Name "AISTV-PREMIUM" -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name "AISTV-PREMIUM" -Password $securePass -FullName "AI STV User" -Description "Premium Account"
+          }
+          Add-LocalGroupMember -Group "Administrators" -Member "AISTV-PREMIUM"
+          echo "RDP_PASS=$pass" >> $env:GITHUB_ENV
+
+      - name: 🌐 THIẾT LẬP MẠNG (TAILSCALE)
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "$env:TEMP\ts.msi"
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$env:TEMP\ts.msi`"", "/quiet", "/norestart" -Wait
+          Start-Sleep -Seconds 5
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTH_KEY --hostname=aistv-premium --accept-routes
+          Write-Host "✅ Network Ready" -ForegroundColor Green
+
+      - name: ⏳ DUY TRÌ PHIÊN LÀM VIỆC (HEARTBEAT)
+        run: |
+          Write-Host "🚀 Bắt đầu chế độ duy trì ổn định..." -ForegroundColor Magenta
+          
+          # Heartbeat chạy ngầm để giữ kết nối không bị Idle
+          $HeartbeatScript = { while($true) { Start-Sleep -Seconds 300 } }
+          Start-Job -ScriptBlock $HeartbeatScript -Name "HeartbeatJob"
+          
+          # Thời gian chạy 340 phút
+          $minutes = 340 
+          $target = (Get-Date).AddMinutes($minutes)
+          
+          while ((Get-Date) -lt $target) {
+              $remaining = ($target - (Get-Date)).ToString("hh\:mm\:ss")
+              Write-Host "`r[⏳ GIỮ KẾT NỐI] Thời gian còn lại: $remaining" -NoNewline -ForegroundColor Cyan
+              Start-Sleep -Seconds 30
+          }
+
+      - name: 🧹 DỌN DẸP
+        if: always()
+        run: |
+          Get-Job -Name "HeartbeatJob" -ErrorAction SilentlyContinue | Remove-Job -Force
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" down --accept-risk=all -ErrorAction SilentlyContinue
+          Write-Host "👋 Đã tắt kết nối an toàn."
