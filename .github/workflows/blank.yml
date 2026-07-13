@@ -15,27 +15,32 @@ on:
 
 jobs:
   Premium-RDP-Setup:
-    runs-on: windows-latest
-    timeout-minutes: 360 # Bạn có thể chỉnh lên tối đa là 360 (6 tiếng)
+    runs-on: windows-2019
+    timeout-minutes: 360
     
     steps:
       - name: 🎯 KHỞI ĐỘNG HỆ THỐNG
         run: |
-          Write-Host "🤖 AI STV PREMIUM RDP SERVER - ENHANCED" -ForegroundColor Yellow
+          Write-Host "🤖 AI STV PREMIUM RDP SERVER - WINDOWS 2019" -ForegroundColor Yellow
           
-      - name: 🔧 CẤU HÌNH HỆ THỐNG
+      - name: 🔧 CẤU HÌNH HỆ THỐNG (RDP & FIREWALL)
         run: |
-          # Bật RDP và config firewall như cũ
+          # Bật Remote Desktop
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          # Cấu hình Firewall cho phép RDP
           netsh advfirewall firewall add rule name="RDP-Premium" dir=in action=allow protocol=TCP localport=3389 profile=any
+          # Khởi động dịch vụ Terminal Services
           Start-Service TermService -ErrorAction SilentlyContinue
 
       - name: 👤 TẠO TÀI KHOẢN PREMIUM
         run: |
-          $pass = "STVPremium123!" # Bạn có thể đổi mật khẩu tại đây
+          $pass = "STVPremium123!"
           $securePass = ConvertTo-SecureString $pass -AsPlainText -Force
-          New-LocalUser -Name "AISTV-PREMIUM" -Password $securePass -ErrorAction SilentlyContinue
+          # Kiểm tra nếu user chưa tồn tại thì tạo mới
+          if (-not (Get-LocalUser -Name "AISTV-PREMIUM" -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name "AISTV-PREMIUM" -Password $securePass -FullName "AI STV User" -Description "Premium Account"
+          }
           Add-LocalGroupMember -Group "Administrators" -Member "AISTV-PREMIUM"
           echo "RDP_PASS=$pass" >> $env:GITHUB_ENV
 
@@ -45,34 +50,32 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "$env:TEMP\ts.msi"
           Start-Process msiexec.exe -ArgumentList "/i", "`"$env:TEMP\ts.msi`"", "/quiet", "/norestart" -Wait
+          Start-Sleep -Seconds 5
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTH_KEY --hostname=aistv-premium --accept-routes
           Write-Host "✅ Network Ready" -ForegroundColor Green
 
-      - name: ⏳ DUY TRÌ PHIÊN LÀM VIỆC (HEARTBEAT MODE)
+      - name: ⏳ DUY TRÌ PHIÊN LÀM VIỆC (HEARTBEAT)
         run: |
           Write-Host "🚀 Bắt đầu chế độ duy trì ổn định..." -ForegroundColor Magenta
           
-          # Cơ chế Heartbeat: Tạo một background job ghi log liên tục 
-          # để GitHub không bao giờ coi runner là "Idle"
+          # Cơ chế Heartbeat ngăn GitHub đóng runner
           $HeartbeatScript = {
               while($true) {
                   $time = Get-Date -Format "HH:mm:ss"
                   Write-Host "[$time] Heartbeat: System Active..."
-                  # Thao tác nhẹ với RAM/CPU để giữ process ấm
-                  $proc = Get-Process | Select-Object -First 10
                   Start-Sleep -Seconds 60
               }
           }
-          Start-Job -ScriptBlock $HeartbeatScript -Name "HeartbeatJob"
+          $job = Start-Job -ScriptBlock $HeartbeatScript -Name "HeartbeatJob"
           
-          # Đợi cho đến khi hết thời gian yêu cầu
-          $minutes = 340 # Mặc định 5h40m
+          # Thời gian chạy (340 phút ~ 5h40m)
+          $minutes = 340 
           $target = (Get-Date).AddMinutes($minutes)
           
           while ((Get-Date) -lt $target) {
               $remaining = ($target - (Get-Date)).ToString("hh\:mm\:ss")
               Write-Host "`r[⏳ GIỮ KẾT NỐI] Thời gian còn lại: $remaining" -NoNewline -ForegroundColor Cyan
-              Start-Sleep -Seconds 10
+              Start-Sleep -Seconds 30
           }
           
           Write-Host "`n✅ Đã hoàn thành thời gian chạy."
@@ -80,6 +83,6 @@ jobs:
       - name: 🧹 DỌN DẸP
         if: always()
         run: |
-          Stop-Job -Name "HeartbeatJob" -ErrorAction SilentlyContinue
+          Get-Job -Name "HeartbeatJob" -ErrorAction SilentlyContinue | Remove-Job -Force
           & "$env:ProgramFiles\Tailscale\tailscale.exe" down --accept-risk=all -ErrorAction SilentlyContinue
           Write-Host "👋 Đã tắt kết nối an toàn."
