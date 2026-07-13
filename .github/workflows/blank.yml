@@ -1,0 +1,85 @@
+name: 🚀 SEVER AI STV PREMIUM - PERSISTENT
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: '🕐 Thời gian sử dụng'
+        required: false
+        default: '5h40m'
+        type: choice
+        options:
+        - '1h'
+        - '3h' 
+        - '5h40m'
+
+jobs:
+  Premium-RDP-Setup:
+    runs-on: windows-latest
+    timeout-minutes: 360 # Bạn có thể chỉnh lên tối đa là 360 (6 tiếng)
+    
+    steps:
+      - name: 🎯 KHỞI ĐỘNG HỆ THỐNG
+        run: |
+          Write-Host "🤖 AI STV PREMIUM RDP SERVER - ENHANCED" -ForegroundColor Yellow
+          
+      - name: 🔧 CẤU HÌNH HỆ THỐNG
+        run: |
+          # Bật RDP và config firewall như cũ
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          netsh advfirewall firewall add rule name="RDP-Premium" dir=in action=allow protocol=TCP localport=3389 profile=any
+          Start-Service TermService -ErrorAction SilentlyContinue
+
+      - name: 👤 TẠO TÀI KHOẢN PREMIUM
+        run: |
+          $pass = "STVPremium123!" # Bạn có thể đổi mật khẩu tại đây
+          $securePass = ConvertTo-SecureString $pass -AsPlainText -Force
+          New-LocalUser -Name "AISTV-PREMIUM" -Password $securePass -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Administrators" -Member "AISTV-PREMIUM"
+          echo "RDP_PASS=$pass" >> $env:GITHUB_ENV
+
+      - name: 🌐 THIẾT LẬP MẠNG PREMIUM (TAILSCALE)
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "$env:TEMP\ts.msi"
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$env:TEMP\ts.msi`"", "/quiet", "/norestart" -Wait
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTH_KEY --hostname=aistv-premium --accept-routes
+          Write-Host "✅ Network Ready" -ForegroundColor Green
+
+      - name: ⏳ DUY TRÌ PHIÊN LÀM VIỆC (HEARTBEAT MODE)
+        run: |
+          Write-Host "🚀 Bắt đầu chế độ duy trì ổn định..." -ForegroundColor Magenta
+          
+          # Cơ chế Heartbeat: Tạo một background job ghi log liên tục 
+          # để GitHub không bao giờ coi runner là "Idle"
+          $HeartbeatScript = {
+              while($true) {
+                  $time = Get-Date -Format "HH:mm:ss"
+                  Write-Host "[$time] Heartbeat: System Active..."
+                  # Thao tác nhẹ với RAM/CPU để giữ process ấm
+                  $proc = Get-Process | Select-Object -First 10
+                  Start-Sleep -Seconds 60
+              }
+          }
+          Start-Job -ScriptBlock $HeartbeatScript -Name "HeartbeatJob"
+          
+          # Đợi cho đến khi hết thời gian yêu cầu
+          $minutes = 340 # Mặc định 5h40m
+          $target = (Get-Date).AddMinutes($minutes)
+          
+          while ((Get-Date) -lt $target) {
+              $remaining = ($target - (Get-Date)).ToString("hh\:mm\:ss")
+              Write-Host "`r[⏳ GIỮ KẾT NỐI] Thời gian còn lại: $remaining" -NoNewline -ForegroundColor Cyan
+              Start-Sleep -Seconds 10
+          }
+          
+          Write-Host "`n✅ Đã hoàn thành thời gian chạy."
+
+      - name: 🧹 DỌN DẸP
+        if: always()
+        run: |
+          Stop-Job -Name "HeartbeatJob" -ErrorAction SilentlyContinue
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" down --accept-risk=all -ErrorAction SilentlyContinue
+          Write-Host "👋 Đã tắt kết nối an toàn."
